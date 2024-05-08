@@ -53,7 +53,7 @@ const client = new MongoClient(uri, {
 async function run() {
   try {
     // Connect the client to the server	(optional starting in v4.7)
-    await client.connect();
+    // await client.connect();
 
     const userCollection = client.db("bistroDb").collection("users");
     const menuCollection = client.db("bistroDb").collection("menu");
@@ -162,13 +162,13 @@ async function run() {
       const result = await menuCollection.insertOne(item);
       res.send(result);
     });
-// update item
-app.get('/menu/:id', async (req, res) => {
-  const id = req.params.id;
-  const query = { _id: new ObjectId(id) }
-  const result = await menuCollection.findOne(query);
-  res.send(result);
-})
+    // update item
+    app.get('/menu/:id', async (req, res) => {
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) }
+      const result = await menuCollection.findOne(query);
+      res.send(result);
+    })
 
     app.patch('/menu/:id', async (req, res) => {
       const item = req.body;
@@ -219,55 +219,118 @@ app.get('/menu/:id', async (req, res) => {
       const query = { _id: new ObjectId(id) }
       const result = await cartCollection.deleteOne(query);
       res.send(result);
-    })
-  // Payment intent
-  app.post('/create-payment-intent', async (req, res) => {
-    const { price } = req.body;
-    const amount = parseInt(price * 100);
-    console.log(amount, 'amount inside the intent')
-
-    const paymentIntent = await 
-     stripe.paymentIntents.create({
-      amount: amount,
-      currency: 'bdt', //usd
-      payment_method_types: ['card']
     });
 
-    res.send({
-      clientSecret: paymentIntent.client_secret
+    // payment intent
+    app.post('/create-payment-intent', async (req, res) => {
+      const { price } = req.body;
+      const amount = parseInt(price * 100);
+      console.log(amount, 'amount inside the intent')
+
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amount,
+        currency: 'bdt',
+        payment_method_types: ['card']
+      });
+
+      res.send({
+        clientSecret: paymentIntent.client_secret
+      })
+    });
+
+
+    app.get('/payments/:email', verifyToken, async (req, res) => {
+      const query = { email: req.params.email }
+      if (req.params.email !== req.decoded.email) {
+        return res.status(403).send({ message: 'forbidden access' });
+      }
+      const result = await paymentCollection.find(query).toArray();
+      res.send(result);
     })
-  });
 
-  app.get('/payments/:email', verifyToken, async (req, res) => {
-    const query = { email: req.params.email }
-    if (req.params.email !== req.decoded.email) {
-      return res.status(403).send({ message: 'forbidden access' });
-    }
-    const result = await paymentCollection.find(query).toArray();
-    res.send(result);
-  })
+    app.post('/payments', async (req, res) => {
+      const payment = req.body;
+      const paymentResult = await paymentCollection.insertOne(payment);
 
-// payment related 
-app.post('/payments', async (req, res) => {
-  const payment = req.body;
-  const paymentResult = await 
-   paymentCollection.insertOne(payment);
-//  carefully delete each item from the cart
-  console.log('payment info', payment);
-  const query = {
-    _id: {
-      $in: payment.cartIds.map(id => new ObjectId(id))
-    }
-  };
+      //  carefully delete each item from the cart
+      console.log('payment info', payment);
+      const query = {
+        _id: {
+          $in: payment.cartIds.map(id => new ObjectId(id))
+        }
+      };
 
-  const deleteResult = await cartCollection.deleteMany(query);
+      const deleteResult = await cartCollection.deleteMany(query);
 
-  res.send({ paymentResult, deleteResult });
-})
+      res.send({ paymentResult, deleteResult });
+    })
 
-    // Send a ping to confirm a successful connection
-    await client.db("admin").command({ ping: 1 });
-    console.log("Pinged your deployment. You successfully connected to MongoDB!");
+    // stats or analytics
+    app.get('/admin-stats',  async (req, res) => {
+      const users = await userCollection.estimatedDocumentCount();
+      const menuItems = await menuCollection.estimatedDocumentCount();
+      const orders = await paymentCollection.estimatedDocumentCount();
+
+      const result = await paymentCollection.aggregate([
+        {
+          $group: {
+            _id: null,
+            totalRevenue: {
+              $sum: '$price'
+            }
+          }
+        }
+      ]).toArray();
+
+      const revenue = result.length > 0 ? result[0].totalRevenue : 0;
+
+      res.send({
+        users,
+        menuItems,
+        orders,
+        revenue
+      })
+    })
+
+    // using aggregate pipeline
+    app.get('/order-stats', async(req, res) =>{
+      const result = await paymentCollection.aggregate([
+        {
+          $unwind: '$menuItemIds'
+        },
+        {
+          $lookup: {
+            from: 'menu',
+            localField: 'menuItemIds',
+            foreignField: '_id',
+            as: 'menuItems'
+          }
+        },
+         {
+           $unwind: '$menuItems'
+         },
+        {
+         $group: {
+           _id: '$menuItems.category',
+           quantity:{ $sum: 1 },
+           revenue: { $sum: '$menuItems.price'} 
+         }
+       },
+      {
+        $project: {
+          _id: 0,
+          category: '$_id',
+          quantity: '$quantity',
+          revenue: '$revenue'
+        }
+      }
+      ]).toArray();
+
+      res.send(result);
+
+    })
+
+
   } finally {
     // Ensures that the client will close when you finish/error
     // await client.close();
