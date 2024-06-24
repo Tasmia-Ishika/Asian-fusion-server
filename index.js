@@ -162,7 +162,14 @@ async function run() {
       const result = await menuCollection.insertOne(item);
       res.send(result);
     });
-    // update item
+
+// Add review
+    app.post('/reviews',  async (req, res) => {
+     const item = req.body;
+     const result = await reviewCollection.insertOne(item);
+     res.send(result);
+    });
+// update item
     app.get('/menu/:id', async (req, res) => {
       const id = req.params.id;
       const query = { _id: new ObjectId(id) }
@@ -270,7 +277,7 @@ async function run() {
       const users = await userCollection.estimatedDocumentCount();
       const menuItems = await menuCollection.estimatedDocumentCount();
       const orders = await paymentCollection.estimatedDocumentCount();
-
+      // const reviews = await reviewCollection.estimatedDocumentCount();
       const result = await paymentCollection.aggregate([
         {
           $group: {
@@ -288,7 +295,8 @@ async function run() {
         users,
         menuItems,
         orders,
-        revenue
+        revenue,
+        // reviews
       })
     })
 
